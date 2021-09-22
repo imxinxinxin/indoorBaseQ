@@ -1,0 +1,109 @@
+import os
+import re
+import numpy as np
+from locationMethod import*
+from tool import*
+from toCSV import *
+from readFile import *
+
+datasetName='park'#不同大小的数据集名称
+#monthNumber=[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]#使用哪几个月的数据进行计算
+monthNumber=[1,3,11,12,13]
+#monthNumber=[14]
+trnAmountInOneMonth=4#单月训练数据rss文件数
+tstAmountInOneMonth=8#单月测试数据rss文件数
+
+#lossList=[0,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0]#路径损耗因子
+#lossList=[4.6,4.7,4.8,4.9,5.0,5.1,5.2,5.3,5.4]
+lossList=[0,4.0,4.5,5.0,5.5,6.0,6.5,7.0,7.5,8.0,8.5,9.0,9.5,10.0,11,12,13]
+#是否使用全部数据,0为单月计算，1为全部数据结合计算
+ifAllData= 0
+
+#保存误差
+metricKnn75andMean = np.zeros((5, 20))#保存误差用
+
+metricKnn75EveryMonth=np.zeros((len(lossList)+1, len(monthNumber)))#保存误差用
+
+#选择楼层
+floor=1
+
+# 获取当前上一级路径到indoorBaseQ
+nowPath = os.path.abspath(os.path.join(os.getcwd(), ".."))
+k=3
+
+APCountList=[10,20,30,40,50,60,70,80,90,100,110,120,130]
+
+if ifAllData==0:#单月分别计算，每月输出一个结果
+    for month in monthNumber:
+        # 读取单月训练集和测试集
+        print(month,"月计算中")
+        allTrnCrd, allTrnRss, allTstCrd, allTstRss = readOneMonth(trnAmountInOneMonth, tstAmountInOneMonth, nowPath,
+                                                               datasetName, month,floor)
+        # AP选择
+        # AP_r = getAP_r(allTrnRss)
+        # AP_list, ap_mat_list = r2list(AP_r, 80)
+        # allTrnRss = allTrnRss[:, ap_mat_list]
+        # allTstRss = allTstRss[:, ap_mat_list]
+
+        # 数据预处理
+        allTrnRss, allTrnCrd = preRmse(allTrnRss, allTrnCrd)
+        allTstRss, allTstCrd = preRmse(allTstRss, allTstCrd)
+
+        errorKnn = np.zeros((1, allTstCrd.shape[0]))  # 每个测试点的误差矩阵
+        for loss in lossList:
+            if loss==0:
+                predictionKnn=kNNEstimation(allTrnRss, allTstRss, allTrnCrd, k, 0,loss)#获取knn预测结果
+            else:
+                print("loss=",loss)
+                predictionKnn = kNNEstimation(allTrnRss, allTstRss, allTrnCrd, k, 1, loss)  # 获取knn预测结果
+            errorKnn[0,:] = customError(predictionKnn, allTstCrd)#计算误差存入误差矩阵，列数=tstRP数
+            error75=np.percentile(errorKnn[0,:], 75)
+
+            metricKnn75EveryMonth[lossList.index(loss),monthNumber.index(month)]=error75
+
+
+    errorPath = os.path.join(nowPath, 'dataset', datasetName, '13测试训练交换.csv')
+    saveNdarryToCsv(metricKnn75EveryMonth, errorPath)  # 保存误差
+
+
+elif ifAllData==1:#所选月份结合计算
+
+
+    finalTrnCrd, finalTrnRss, finalTstCrd, finalTstRss = readAllMonth(trnAmountInOneMonth, tstAmountInOneMonth,
+                                                                          nowPath,
+                                                                          datasetName, monthNumber, floor)
+    # AP选择
+    # AP_r = getAP_r(finalTrnRss)
+    # AP_list, ap_mat_list = r2list(AP_r,90)
+    # finalTrnRss = finalTrnRss[:, ap_mat_list]
+    # finalTstRss = finalTstRss[:, ap_mat_list]
+
+    # 数据预处理
+    finalTrnRss, finalTrnCrd = preRmse(finalTrnRss, finalTrnCrd)
+    finalTstRss, finalTstCrd = preRmse(finalTstRss, finalTstCrd)
+
+
+    '''定位算法'''
+    #knn方法
+    errorKnn = np.zeros((1, finalTstCrd.shape[0]))  # 每个测试点的误差矩阵
+    for loss in lossList:
+        if loss == 0:
+            predictionKnn = wkNNEstimation(finalTrnRss, finalTstRss, finalTrnCrd, k, 0, loss)  # 获取knn预测结果
+        else:
+            predictionKnn = wkNNEstimation(finalTrnRss, finalTstRss, finalTrnCrd, k, 1, loss)  # 获取knn预测结果
+
+
+
+
+
+        errorKnn[0, :] = customError(predictionKnn, finalTstCrd)  # 计算误差存入误差矩阵，列数=tstRP数
+
+        metricKnn75andMean[ 0,lossList.index(loss)]=np.percentile(errorKnn[0,:], 75)
+
+        metricKnn75andMean[1, lossList.index(loss)] = np.mean(errorKnn[0, :])
+        print("第"+str(lossList.index(loss))+"个loss已完成。")
+
+    errorPath=os.path.join(nowPath, 'dataset', datasetName, '01QAP自适应KError.csv')
+    saveNdarryToCsv(metricKnn75andMean,errorPath)#保存误差
+
+print("实验结束")
